@@ -1,0 +1,134 @@
+name: init (autorun)
+
+on:
+  create:
+  workflow_dispatch:
+    inputs:
+      add_attempts_var:
+        description: "Set variable for testing"
+        default: true
+        type: boolean
+      add_branch_pr:
+        description: "Create branch and PR"
+        default: true
+        type: boolean
+  
+defaults:
+  run:
+    shell: pwsh
+    
+env:
+  GITHUB_TOKEN: ${{ secrets.VAR_TOKEN }}
+  
+jobs:  
+  add_var:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && contains(fromJSON('["26046784", "96750568", "48153570", "44366841", "49571700"]'), github.actor_id) 
+      || github.event_name == 'create'
+      && github.ref == 'refs/heads/main'
+      
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:
+      - run: |
+          ## The token must have the following permission set:
+          ## actions_variables:write and environments:write          
+          $OWNER = '${{ github.repository_owner }}'
+          $REPO = '${{ github.event.repository.name }}'
+
+          $var_name = 'RUN_NUMBER'
+          $vari = ${{ vars.LW1_RUNS_PER_ATTEMPT }}
+          $vari
+          
+          $check_var = gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+            /repos/$OWNER/$REPO/actions/variables/$var_name 
+            | ConvertFrom-JSON
+
+          $check_var
+            
+          if ($LastExitCode -eq 0)
+          {
+            Write-Host "Var '$var_name' exists with value $($check_var.value)`nValue will be set by default ($vari)"
+            gh api --method PATCH -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+              /repos/$OWNER/$REPO/actions/variables/$var_name  `
+              -f name=$var_name `
+              -f value=$vari
+          }
+          else
+          {            
+            Write-Host "Create var '$var_name' with value $vari"
+            gh api --method POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+              /repos/$OWNER/$REPO/actions/variables  `
+              -f name=$var_name `
+              -f value=$vari
+          }
+    
+  add_branch_pr:
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      && contains(fromJSON('["26046784", "96750568", "48153570", "44366841", "49571700"]'), github.actor_id) 
+      || github.event_name == 'create'
+      && github.ref == 'refs/heads/main'
+      
+    runs-on: ubuntu-22.04
+    timeout-minutes: 2
+    steps:            
+      - name: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+      
+      - name: add_branch_pr
+        run: |
+          ## The token must have the following permission set:
+          ## actions_variables:write and environments:write          
+          $OWNER = '${{ github.repository_owner }}'
+          $REPO = '${{ github.event.repository.name }}'
+          
+          $branches = gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+              /repos/$OWNER/$REPO/branches 
+              | ConvertFrom-JSON
+
+          if ($branches.Count -eq 1) # need 2 -- debug
+          {
+              Write-Host "Create feedback branch + PR manually"
+              git config user.name github-actions
+              git config user.email github-actions@github.com
+
+              $new_branch = 'feedback3'
+              
+              git checkout -b $new_branch
+              git push -u origin $new_branch
+              
+              $collaborators = gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+                /repos/$OWNER/$REPO/collaborators 
+                | ConvertFrom-JSON
+              
+              git checkout main
+              New-Item ".github/.keep_" -type File -Force -Confirm:$false
+              git add ".github/.keep_"
+              git commit -a -m "Setting up GitHub Classroom Feedback"
+              git push origin main      
+
+              $collaborators = gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" `
+                /repos/$OWNER/$REPO/collaborators 
+                | ConvertFrom-JSON
+
+              $collaborators
+              
+              $user = ($collaborators | Where-Object {$_.role_name -ne "admin"} ).login
+              $user
+              
+              $PR = gh api --method POST -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28"  `
+                /repos/$OWNER/$REPO/pulls -f title="Feedback" `
+                -f body="It's a place for your teacher to leave feedback on your work. It will update automatically. Dont close or merge this pull request. In this pull request, your teacher will leave comments and feedback on your code. Click the Subscribe button to be notified if that happens. Subscribed: @$user" `
+                -f head="main" -f base=$new_branch  
+                | ConvertFrom-JSON
+
+              $PR
+          }   
+          else
+          {          
+              Write-Host "[OK] Feedback branch + PR created automatically"
+          }
